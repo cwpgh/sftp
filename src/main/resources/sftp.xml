@@ -4,9 +4,19 @@
 	<scr>
 		<srcIp></srcIp>
 	    <srcPort></srcPort><!-- 默认22端口 -->
+	    <userName></userName>
+	    <password></password>
 	</scr>
 	<propertites></propertites>
 	<sftp >
+		<!-- 
+			1.是否覆盖
+			2.是否备份
+			3.
+		
+		
+		
+		 -->
 		<scr>
 			<srcIp></srcIp>
 		    <srcPort></srcPort>
@@ -17,6 +27,7 @@
 		</dest>
 		<target>
 		    <input>/</input>
+		    <out>/</out>
 		</target>
 		
 	</sftp>
