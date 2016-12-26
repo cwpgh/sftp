@@ -1,0 +1,522 @@
+http://blog.csdn.net/galdys/article/details/6712247
+
+
+SCP协议本身打开SSH通道时指定的是scp命令，而是用SFTP时指定的sftp。以下是一些具体的介绍，详细内容需要参考对应的RFC文件。
+
+下面是目前整理的使用的一份：
+
+1） 协议中数据包格式
+
+通过安全通道传输的所有包的格式如下：
+
+     uint32           length
+
+     byte             type
+
+     uint32           request-id
+
+     ... 具体类型域 ...
+
+length：整个包的长度，不包括长度域本身。因此，例如一个不包含具体类型域的包的长度域是5个字节，那么将有9个字节发送到路线上。实际上包的最大尺寸由客户端决定（它发送的读写请求包最大尺寸，外加一些字节的包开销）。所有服务器应当支持至少34000字节的包（这里的包尺寸是指全长，包括上述头部）。也就是允许读写最多32768个字节。
+
+ 
+
+type：包的类型码。
+
+ 
+
+request-id：从客户端来的每一个请求包含一个请求ID域，从服务端返回的每个响应也包含和服务器应答的请求一样的请求ID。一个可能的是实现是客户提供给我们一个单调递增的序号（模除2^32）。然而没有特殊的要求请求ID域是唯一的。
+
+     
+
+SFTP协议中只有两个包，INIT和VERSION，不需要使用请求ID。
+
+ 
+
+2） 协议中各种包具体格式和响应
+
+包的类型type如下：
+
+SSH_FXP_INIT                1
+
+SSH_FXP_VERSION             2
+
+SSH_FXP_OPEN                3
+
+SSH_FXP_CLOSE               4
+
+SSH_FXP_READ                5
+
+SSH_FXP_WRITE               6
+
+SSH_FXP_LSTAT               7
+
+SSH_FXP_FSTAT               8
+
+SSH_FXP_SETSTAT             9
+
+SSH_FXP_FSETSTAT           10
+
+SSH_FXP_OPENDIR            11
+
+SSH_FXP_READDIR            12
+
+SSH_FXP_REMOVE             13
+
+SSH_FXP_MKDIR              14
+
+SSH_FXP_RMDIR              15
+
+SSH_FXP_REALPATH           16
+
+SSH_FXP_STAT               17
+
+SSH_FXP_RENAME             18
+
+SSH_FXP_READLINK           19
+
+SSH_FXP_LINK               21
+
+SSH_FXP_BLOCK              22
+
+SSH_FXP_UNBLOCK            23
+
+ 
+
+SSH_FXP_STATUS            101
+
+SSH_FXP_HANDLE            102
+
+SSH_FXP_DATA              103
+
+SSH_FXP_NAME              104
+
+SSH_FXP_ATTRS             105
+
+ 
+
+SSH_FXP_EXTENDED          200
+
+SSH_FXP_EXTENDED_REPLY    201
+
+ 
+
+客户端初始化包
+
+type    SSH_FXP_INIT
+
+uint32  version
+
+ 
+
+对这个消息的响应是下面的服务器初始化版本包SSH_FXP_VERSION。
+
+ 
+
+服务器初始化包
+
+type    SSH_FXP_VERSION
+
+uint32  version
+
+ 
+
+打开文件包
+
+byte     SSH_FXP_OPEN
+
+uint32   request-id
+
+string   filename [UTF-8]
+
+uint32   desired-access
+
+uint32   flags
+
+ATTRS  attrs
+
+ 
+
+对这个消息的响应将会是SSH_FXP_HANDLE(如果操作成功的话)或者SSH_FXP_STATUS（如果操作失败）
+
+ 
+
+关闭句柄
+
+byte     SSH_FXP_CLOSE
+
+uint32   request-id
+
+string   handle
+
+ 
+
+handle是以前SSH_FXP_OPEN或SSH_FXP_OPENDIR返回的句柄。句柄变为无效后立即请求已发送。
+
+对此请求的响应将是一个SSH_FXP_STATUS消息。请注意，在一些服务器平台上关闭操作可能会失败。例如，如果服务器操作系统缓存写入，在冲洗缓存写入时发生错误，关闭操作就可能失败。
+
+注意不论SSH_FXP_STATUS的结果，句柄是无效的。没有办法为客户恢复关闭失败的句柄。客户端必须释放与句柄关联的所有资源，无论状态。服务器应采取的任何步骤，它可以恢复从关闭失败，以确保服务器上的处理相关联的所有资源正确释放。
+
+ 
+
+读取文件
+
+byte     SSH_FXP_READ
+
+uint32   request-id
+
+string   handle
+
+uint64   offset
+
+uint32   length
+
+ 
+
+handle 是被SSH_FXP_OPEN返回打开的文件句柄。如果不是被SSH_FXP_OPEN返回的句柄，服务器必须返回SSH_FX_INVALID_HANDLE。
+
+   offset是偏移量（以字节为单位）相对于读取文件开始的地方。此字段被忽略，如果SSH_FXF_TEXT_MODE指定在打开的时候。
+
+   length 是读取的最大字节数。
+
+      服务器不能响应比的“length”参数指定的更多的数据。但是，服务器的响应可能较少的数据，如果达到EOF，遇到一个错误，或内部缓冲区的服务器无法处理这么大的要求。
+
+      如果服务器指定一个非零的max-read-size在它的supported2扩展中，并且length小于max-read-size，没有返回length个字节暗示EOF或者错误发生。
+
+ 
+
+写入文件
+
+byte     SSH_FXP_WRITE
+
+uint32   request-id
+
+string    handle
+
+uint64    offset
+
+string    data
+
+ 
+
+   handle是一个打开文件句柄被SSH_FXP_OPEN返回的。如果handle不是一个SSH_FXP_OPEN返回的句柄，服务器必须返回SSH_FX_INVALID_HANDLE。
+
+   offset是偏移量（以字节为单位），相对于文件的开头写必须开始。此字段被忽略，如果SSH_FXF_TEXT_MODE是在打开期间指定。如果超出文件末尾写的话，会扩展文件。它是合法的，写一个偏移量超出该文件的末尾扩展的语义是从文件末尾写字节值0x00指定的偏移，然后是数据。在大多数操作系统上，如写不分配磁盘空间，而是创建一个稀疏文件。
+
+   data是要写入文件的数据。
+
+   服务器响应一个写请求一个SSH_FXP_STATUS消息。
+
+ 
+
+获取文件属性
+
+很多时候，文件属性是SSH_FXP_READDIR自动返回的。然而，有些时候需要专门获得命名文件的属性。可以使用SSH_FXP_STAT，SSH_FXP_LSTAT和SSH_FXP_FSTAT请求。
+
+   SSH_FXP_STAT和SSH_FXP_LSTAT不同，仅仅在于SSH_FXP_STAT遵循在服务器上的符号链接，然而SSH_FXP_LSTAT不遵循符号链接。两者的有一样的格式：
+
+  byte     SSH_FXP_STAT or SSH_FXP_LSTAT
+
+  uint32   request-id
+
+  string   path [UTF-8]
+
+  uint32   flags
+
+ 
+
+   其中request-id是请求标识符，path指定状态被返回的文件系统对象。服务器用SSH_FXP_ATTRS或者SSH_FXP_STATUS返回请求。
+
+   flag字段指定客户端有特别兴趣的属性标志。这是到服务器的提示。例如，在某些操作系统上获取ower、group和acl信息是昂贵的操作，服务器可能不获取它们除非客户端表达出特别的兴趣。
+
+   客户端不能保证服务器提供所有它感兴趣的字段。
+
+  
+
+   SSH_FXP_FSTAT不同于其他在于它返回一个打开的文件（文件句柄标识）的状态信息。
+
+   byte      SSH_FXP_FSTAT
+
+   uint32    request-id
+
+   string    handle
+
+   uint32    flags
+
+ 
+
+      handle是一个SSH_FXP_OPEN或者SSH_FXP_OPENDIR打开的文件句柄。
+
+   服务器用SSH_FXP_ATTRS或者SSH_FXP_STATUS来响应这个请求。
+
+ 
+
+设置文件属性
+
+文件属性可以使用SSH_FXP_SETSTAT和SSH_FXP_FSETSTAT请求来修改。
+
+byte      SSH_FXP_SETSTAT
+
+uint32    request-id
+
+string    path [UTF-8]
+
+ATTRS     attrs
+
+ 
+
+byte      SSH_FXP_FSETSTAT
+
+uint32    request-id
+
+string    handle
+
+ATTRS     attrs
+
+ 
+
+path是属性被修改的文件系统对象（例如，文件或者目录）。如果对象不存在，或者用户没有足够的访问权限去改写属性，请求会失败。
+
+handle是SSH_FXP_OPEN或者SSH_FXP_OPENDIR打开的文件句柄。如果句柄没有被足够的访问权限打开去改写请求的熟悉，请求会失败。
+
+attrs指定被应用的修改属性。更多细节参看File Attributes节。
+
+服务器用SSH_FXP_STATUS消息响应。
+
+因为某些系统可能使用分离的系统调用来设置各种属性，可能某些属性已经被修改了，仍然返回一个失败的响应。如果可能，服务器应该避免这种情况；然而，客户端必须清楚这种可能性。
+
+ 
+
+打开目录
+
+byte     SSH_FXP_OPENDIR
+
+uint32   request-id
+
+string   path [UTF-8]
+
+ 
+
+path字段是列举的（没有任何尾随的斜线）的目录的路径名。更多信息参看“File Names”。
+
+如果“路径”并不是指到一个目录，服务器必须返回SSH_FX_NOT_A_DIRECTORY。
+
+此消息的响应，将要么SSH_FXP_HANDLE（如果操作成功）或SSH_FXP_STATUS（如果操作失败）。
+
+ 
+
+读取目录
+
+byte     SSH_FXP_READDIR
+
+uint32   request-id
+
+string   handle
+
+ 
+
+handle是由SSH_FXP_OPENDIR返回的句柄。如果handle是一个SSH_FXP_OPEN返回普通的文件句柄，服务器必须返回SSH_FX_INVALID_HANDLE。
+
+服务器用一个SSH_FXP_NAME或SSH_FXP_STATUS消息响应这个请求。在一段时间，可能会返回一个或多个名称。完整的状态信息返回每个名称，以加速典型的目录清单。
+
+如果没有更多的名字可以读取，服务器必须响应一个SSH_FXP_STATUS消息，错误代码的SSH_FX_EOF
+
+ 
+
+删除文件
+
+byte      SSH_FXP_REMOVE
+
+uint32    request-id
+
+string    filename [UTF-8]
+
+filename是要删除的文件名称。更多信息参考“File Names”。
+
+如果filename是一个符号链接，链接被删除，指向的文件不会被删除。
+
+这个请求不能被用于移除目录，在这种情况下，服务器必须返回SSH_FX_FILE_IS_A_DIRECTORY。
+
+服务器将会用SSH_FXP_STATUS消息响应这个请求。
+
+ 
+
+重命名文件
+
+byte       SSH_FXP_RENAME
+
+uint32     request-id
+
+string     oldpath [UTF-8]
+
+string     newpath [UTF-8]
+
+uint32     flags
+
+ 
+
+  其中“request-id”是请求标识符，“oldpath“是现有的文件或目录的名称，”newpath“是为新的文件或目录名称。
+
+   'flags' 是 0 或者以下值的组合：
+
+   SSH_FXF_RENAME_OVERWRITE  0x00000001
+
+   SSH_FXF_RENAME_ATOMIC     0x00000002
+
+   SSH_FXF_RENAME_NATIVE     0x00000004
+
+   如果服务器不支持请求的操作模式，它必须返回SSH_FX_OP_UNSUPPORTED。
+
+   如果flags不包括SSH_FXP_RENAME_OVERWRITE，newpath指定的名称已经存在一个文件，服务器必须响应SSH_FX_FILE_ALREADY_EXISTS。
+
+   如果flags包括SSH_FXP_RENAME_ATOMIC，目标文件已存在，它是在一个原子的方式取代。例如，有没有在时间上观察到的瞬间，其中的名称并不是指无论是旧的或新的文件。 SSH_FXP_RENAME_ATOMIC意味着SSH_FXP_RENAME_OVERWRITE。
+
+   服务器将用SSH_FXP_STATUS消息来回应这个请求。
+
+ 
+
+创建目录
+
+byte      SSH_FXP_MKDIR
+
+uint32    request-id
+
+string    path [UTF-8]
+
+ATTRS  attrs
+
+其中request-id是请求标识符，path指定被创建的目录，attrs指定了应该被应用到创建上的属性。
+
+服务器将用SSH_FXP_STATUS消息来响应这个请求。如果指定的文件或者目录已经存在了，错误将被返回。
+
+ 
+
+移除目录
+
+byte     SSH_FXP_RMDIR
+
+uint32   request-id
+
+string   path [UTF-8]
+
+ 
+
+其中request-id是请求标识符，path指定被移除的目录。
+
+服务器用SSH_FXP_STATUS消息响应请求。
+
+ 
+
+状态响应
+
+SSH_FXP_STATUS响应数据部分的格式如下：
+
+byte     SSH_FXP_STATUS
+
+uint32   request-id
+
+uint32   error/status code
+
+string   error message (ISO-10646 UTF-8 [RFC-2279])
+
+string   language tag (as defined in [RFC-1766])
+
+error-specific data
+
+ 
+
+request-id指示服务端响应的客户端请求。
+
+error/status code是机器可读的状态代码指示请求的结果。值SSH_FX_OK指示成功，其他值指示失败。实现必须准备能收到意想不到的错误代码，他们理智地处理（如他们视为等同于SSH_FX_FAILURE）。
+
+error message是人类可读的错误描述。
+
+language tag指示错误使用的语言。
+
+error-specific data可能是空的，可能包含附加的错误信息。
+
+ 
+
+句柄响应
+
+SSH_FXP_HANDLE响应的格式如下：
+
+byte      SSH_FXP_HANDLE
+
+uint32    request-id
+
+string    handle
+
+ 
+
+handle是一个任意的字符串，用于标识一个打开的文件或服务器上的目录。句柄对客户端是不透明的，不要试图以任何方式解释或修改它。句柄字符串的长度不能超过256个字节的数据。
+
+ 
+
+数据响应
+
+SSH_FXP_DATA响应的格式如下：
+
+byte     SSH_FXP_DATA
+
+uint32   request-id
+
+string   data
+
+bool     end-of-file [optional]
+
+      
+
+data是一个任意字节的字符串，其中包含请求的数据。数据字符串最多可能被要求在SSH_FXP_READ请求的字节数，但也可能较短。
+
+end-of-file此字段是可选的，如果是存在和为真的，它表明，EOF的是读期间到达的。这可以帮助客户避免了往返，以确定短读是否正常（由于EOF）或一些其他问题（例如有限的服务器的缓冲区。）
+
+名称响应
+
+SSH_FXP_NAME响应的格式如下：
+
+byte     SSH_FXP_NAME
+
+uint32   request-id
+
+uint32   count
+
+repeats  count times:
+
+    string       filename [UTF-8]
+
+    ATTRS        attrs
+
+bool     end-of-list [optional]
+
+ 
+
+count在这个响应中返回的名称的数目，filename和attrs重复count次。
+
+filename是被返回的文件名。
+
+attrs是该文件的属性。
+
+end-of-list如果这个字段是存在的和为真，没有更多的读取条目了。除非请求是SSH_FXP_READDIR，否则字段应该被省略或为真。
+
+ 
+
+属性响应
+
+SSH_FXP_ATTRS响应的格式如下：
+
+byte      SSH_FXP_ATTRS
+
+uint32    request-id
+
+ATTRS     attrs
+
+ 
+
+attrs返回的文件属性。
+
+1） 协议工作流程
+
+客户端向服务器端上发送文件
+
+ 
