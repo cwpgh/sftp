@@ -3,7 +3,7 @@ package com.cwp.sftp.io.protocal;
 public class SftpPackageBase {
 
 	private Long length;
-	private char type;
+	private byte type;
 	private Long requestId;
 
 	public Long getLength() {
@@ -14,11 +14,11 @@ public class SftpPackageBase {
 		this.length = length;
 	}
 
-	public char getType() {
+	public byte getType() {
 		return type;
 	}
 
-	public void setType(char type) {
+	public void setType(byte type) {
 		this.type = type;
 	}
 
